@@ -24,6 +24,10 @@ SR = 22050
 LANES = [W * 0.2, W * 0.5, W * 0.8]
 PLAYER_Y = 590
 LEVEL_TIME = 30.0  # segundos por fase
+SWERVE_CHANCE = (0.10, 0.25, 0.40)  # chance de um dançarino trocar de faixa, por fase
+SWERVE_Y = 0  # altura da tela em que o dançarino de branco começa a avisar
+SWERVE_WARN = 0.35  # segundos de aviso piscando antes de se mexer
+SWERVE_SPEED = 420  # velocidade lateral (pixels por segundo)
 
 LEVELS = [
     {"name": "Pista Clássica", "bpm": 110, "root": 55.00, "prog": [0, 0, 5, 7],
@@ -195,18 +199,28 @@ class Game:
         lanes = random.sample(range(3), 3)  # faixas em ordem aleatória
         if random.random() <= LEVELS[self.level]["density"]:
             n = 2 if random.random() < 0.15 + 0.1 * self.level else 1
+            free = lanes[n:]  # faixas que ficaram livres nesta batida
             for lane in lanes[:n]:
-                self.obstacles.append({
-                    "lane": lane, "y": -100.0, "passed": False,
+                o = {
+                    "lane": lane, "x": LANES[lane], "y": -100.0, "passed": False,
                     "kind": "box" if random.random() < 0.25 else "dancer",
                     "phase": random.random() * 6.28,
                     "col": random.choice(DANCER_COLORS),
-                })
-            lanes = lanes[n:]
+                    "swerve_to": None, "swerve_t": 0.0,
+                }
+                # dançarino de branco: troca para uma faixa vizinha que está livre
+                if o["kind"] == "dancer" and random.random() < SWERVE_CHANCE[self.level]:
+                    near = [f for f in free if abs(f - lane) == 1]
+                    if near:
+                        o["swerve_to"] = random.choice(near)
+                        o["col"] = (255, 255, 255)
+                        free.remove(o["swerve_to"])  # reserva a faixa de destino
+                self.obstacles.append(o)
+            lanes = free
         # power-up raro, sempre numa faixa que ficou livre
         if lanes and random.random() < 0.10:
             self.obstacles.append({
-                "lane": lanes[0], "y": -100.0, "passed": False,
+                "lane": lanes[0], "x": LANES[lanes[0]], "y": -100.0, "passed": False,
                 "kind": "power", "power": random.choice(("shield", "x2")),
             })
 
@@ -262,7 +276,19 @@ class Game:
         airborne = self.jump_t >= 0 and 0.12 < self.jump_t < 0.53
         for o in self.obstacles:
             o["y"] += spd * dt
-            ox = LANES[o["lane"]]
+            target = o.get("swerve_to")
+            if target is not None and o["y"] > SWERVE_Y:
+                o["swerve_t"] += dt
+                if o["swerve_t"] > SWERVE_WARN:  # depois do aviso, desliza de lado
+                    goal = LANES[target]
+                    step = SWERVE_SPEED * dt
+                    if abs(goal - o["x"]) <= step:
+                        o["x"] = goal
+                        o["lane"] = target
+                        o["swerve_to"] = None
+                    else:
+                        o["x"] += step if goal > o["x"] else -step
+            ox = o["x"]
             w, h = {"dancer": (54, 80), "box": (64, 36), "power": (44, 44)}[o["kind"]]
             r = pygame.Rect(0, 0, w, h)
             r.center = (ox, o["y"])
@@ -347,6 +373,15 @@ class Game:
         img = self.font.render("S" if kind == "shield" else "x2", True, (20, 20, 40))
         s.blit(img, img.get_rect(center=(x, y)))
 
+    def draw_warning(self, s, x, y, target):
+        if int(self.t * 10) % 2 == 0:  # pisca
+            return
+        d = 1 if LANES[target] > x else -1
+        pygame.draw.polygon(s, (255, 60, 60),
+                            [(x + d * 50, y), (x + d * 30, y - 14), (x + d * 30, y + 14)])
+        img = self.big.render("!", True, (255, 60, 60))
+        s.blit(img, img.get_rect(center=(x, y - 85)))
+
     def draw_player(self, s):
         h = 0.0
         if self.jump_t >= 0:
@@ -378,9 +413,11 @@ class Game:
         self.draw_floor(s, lv)
         self.draw_lights(s, lv)
         for o in sorted(self.obstacles, key=lambda o: o["y"]):
-            x = LANES[o["lane"]]
+            x = o["x"]
             if o["kind"] == "dancer":
                 self.draw_dancer(s, x, o["y"], o["col"], o["phase"])
+                if o.get("swerve_to") is not None and o["y"] > SWERVE_Y:
+                    self.draw_warning(s, x, o["y"], o["swerve_to"])
             elif o["kind"] == "box":
                 self.draw_box(s, x, o["y"])
             else:
