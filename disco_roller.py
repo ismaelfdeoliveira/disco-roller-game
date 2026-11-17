@@ -2,6 +2,7 @@
 
 Controles:
   Teclado: setas ou A/D trocam de faixa, ESPAÇO/seta pra cima/W pula, ENTER inicia.
+  P ou ESC pausa, M liga/desliga o som.
   Mouse/toque: lado esquerdo da tela vai para a esquerda, lado direito para a
   direita, meio da tela pula.
 
@@ -98,15 +99,54 @@ def make_track(level):
     return pygame.sndarray.make_sound(stereo)
 
 
+# --------------------------------------------------------- efeitos sonoros ----
+def _sweep(f0, f1, dur, vol=0.4, kind="sine"):
+    """Tom que desliza de f0 a f1 Hz, com volume caindo até zero."""
+    n = int(SR * dur)
+    phase = np.cumsum(np.linspace(f0, f1, n)) / SR
+    wave = np.sin(2 * np.pi * phase) if kind == "sine" else np.where(phase % 1.0 < 0.5, 1.0, -1.0)
+    return wave * np.linspace(1, 0, n) ** 1.5 * vol
+
+
+def _noise(dur, vol=0.4):
+    n = int(SR * dur)
+    t = np.arange(n) / SR
+    return np.random.uniform(-1, 1, n) * np.exp(-t * (6 / dur)) * vol
+
+
+def _to_sound(buf):
+    pcm = (np.clip(buf, -1, 1) * 32767).astype(np.int16)
+    return pygame.sndarray.make_sound(np.ascontiguousarray(np.column_stack((pcm, pcm))))
+
+
+def make_sfx():
+    """Efeitos curtos do jogo, todos gerados por código."""
+    def arpeggio(freqs, dur):
+        return np.concatenate([_sweep(f, f, dur, 0.3, "square") for f in freqs])
+    return {
+        "jump": _to_sound(_sweep(300, 700, 0.15, 0.35)),
+        "style": _to_sound(_sweep(900, 1400, 0.10, 0.25)),
+        "power": _to_sound(arpeggio((523, 659, 784, 1047), 0.07)),
+        "level": _to_sound(arpeggio((392, 523, 659, 784, 1047), 0.09)),
+        "shield_break": _to_sound(_noise(0.25, 0.5) * 0.6 + _sweep(600, 150, 0.25, 0.4, "square")),
+        "crash": _to_sound(_noise(0.5, 0.45) + _sweep(300, 60, 0.5, 0.4)),
+    }
+
+
 # ------------------------------------------------------------------ jogo ----
 class Game:
     def __init__(self):
         self.font = pygame.font.Font(None, 34)
         self.big = pygame.font.Font(None, 68)
+        self.sfx = {}
+        self.muted = False
+        self.music_ch = None
         try:
             self.sounds = [make_track(lv) for lv in LEVELS]
+            self.sfx = make_sfx()
         except Exception:  # sem áudio disponível: o jogo roda mudo
             self.sounds = []
+            self.sfx = {}
         self.best = self.load_best()
         self.state = "menu"
         self.reset()
@@ -152,11 +192,15 @@ class Game:
     def play_music(self):
         if self.sounds:
             pygame.mixer.stop()
-            self.sounds[self.level].play(loops=-1)
+            self.music_ch = self.sounds[self.level].play(loops=-1)
+            if self.muted and self.music_ch:
+                self.music_ch.set_volume(0.0)
 
     def game_over(self):
         self.state = "over"
-        pygame.mixer.stop()
+        if self.sounds:  # sem áudio, não há o que parar
+            pygame.mixer.stop()
+        self.sfx_play("crash")
         if int(self.score) > self.best:
             self.best = int(self.score)
             self.save_best()
@@ -168,8 +212,40 @@ class Game:
     def jump(self):
         if self.jump_t < 0:
             self.jump_t = 0.0
+            self.sfx_play("jump")
+
+    def sfx_play(self, name):
+        if not self.muted and name in self.sfx:
+            self.sfx[name].play()
+
+    def toggle_pause(self):
+        if self.state == "play":
+            self.state = "pause"
+            if self.sounds:
+                pygame.mixer.pause()
+        elif self.state == "pause":
+            self.state = "play"
+            if self.sounds:
+                pygame.mixer.unpause()
+
+    def auto_pause(self):  # pausa sozinho quando a janela perde o foco
+        if self.state == "play":
+            self.toggle_pause()
+
+    def toggle_mute(self):
+        self.muted = not self.muted
+        if self.music_ch:
+            self.music_ch.set_volume(0.0 if self.muted else 1.0)
 
     def key(self, k):
+        if k == pygame.K_m:
+            self.toggle_mute()
+            return
+        if k in (pygame.K_p, pygame.K_ESCAPE) and self.state in ("play", "pause"):
+            self.toggle_pause()
+            return
+        if self.state == "pause":
+            return
         if self.state != "play":
             if k in (pygame.K_RETURN, pygame.K_SPACE):
                 self.start()
@@ -182,7 +258,9 @@ class Game:
             self.jump()
 
     def tap(self, pos):
-        if self.state != "play":
+        if self.state == "pause":
+            self.toggle_pause()
+        elif self.state != "play":
             self.start()
         elif pos[0] < W / 3:
             self.move(-1)
@@ -225,6 +303,7 @@ class Game:
             })
 
     def collect(self, power):
+        self.sfx_play("power")
         if power == "shield":
             self.shield = True
             self.popup("ESCUDO!", self.px, PLAYER_Y - 90)
@@ -247,6 +326,7 @@ class Game:
             self.beat_t = 0.0
             self.banner_t = 3.0
             self.play_music()
+            self.sfx_play("level")
 
         spd = self.speed()
         mult = 2 if self.x2_t > 0 else 1
@@ -302,6 +382,7 @@ class Game:
                 if self.shield:  # o escudo absorve a batida e some
                     self.shield = False
                     o["dead"] = True
+                    self.sfx_play("shield_break")
                     self.popup("ESCUDO QUEBROU!", self.px, PLAYER_Y - 90)
                     continue
                 self.game_over()
@@ -310,9 +391,11 @@ class Game:
                 o["passed"] = True
                 if o["kind"] == "dancer" and abs(ox - self.px) < 90:
                     self.score += 5 * mult
+                    self.sfx_play("style")
                     self.popup(f"ESTILO! +{5 * mult}", self.px, PLAYER_Y - 70)
                 elif o["kind"] == "box" and airborne:
                     self.score += 5 * mult
+                    self.sfx_play("style")
                     self.popup(f"PULO! +{5 * mult}", self.px, PLAYER_Y - 70)
         self.obstacles = [o for o in self.obstacles
                           if o["y"] < H + 100 and not o.get("dead")]
@@ -439,10 +522,19 @@ class Game:
             self.center_text(s, "DISCO ROLLER", 300, self.big, (255, 240, 120))
             self.center_text(s, "Toque ou ENTER para começar", 360)
             self.center_text(s, "Setas: faixa | Espaço: pular", 400)
+            self.center_text(s, "P: pausa | M: som", 440)
         elif self.state == "over":
             self.center_text(s, "FIM DE JOGO", 300, self.big, (255, 100, 100))
             self.center_text(s, f"Pontos: {int(self.score)}", 355)
             self.center_text(s, "Toque ou ENTER para tentar de novo", 400)
+        elif self.state == "pause":
+            veil = pygame.Surface((W, H), pygame.SRCALPHA)
+            veil.fill((0, 0, 0, 150))
+            s.blit(veil, (0, 0))
+            self.center_text(s, "PAUSADO", 320, self.big, (255, 240, 120))
+            self.center_text(s, "P ou toque para continuar", 380)
+        if self.muted:
+            s.blit(self.font.render("Som desligado (M)", True, (200, 200, 200)), (12, H - 32))
 
 
 async def main():
@@ -462,6 +554,8 @@ async def main():
                 game.key(e.key)
             elif e.type == pygame.MOUSEBUTTONDOWN:
                 game.tap(e.pos)
+            elif e.type == pygame.WINDOWFOCUSLOST:
+                game.auto_pause()
         game.update(dt)
         game.draw(screen)
         pygame.display.flip()
