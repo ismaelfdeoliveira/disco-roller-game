@@ -137,6 +137,8 @@ class Game:
         self.beat_t = 0.0
         self.popups = []
         self.banner_t = 3.0
+        self.shield = False  # escudo: absorve uma batida
+        self.x2_t = 0.0  # segundos restantes de pontos em dobro
 
     def start(self):
         self.reset()
@@ -190,16 +192,31 @@ class Game:
         return min(300 + self.t * 3, 650)
 
     def spawn(self):
-        if random.random() > LEVELS[self.level]["density"]:
-            return
-        n = 2 if random.random() < 0.15 + 0.1 * self.level else 1
-        for lane in random.sample(range(3), n):
+        lanes = random.sample(range(3), 3)  # faixas em ordem aleatória
+        if random.random() <= LEVELS[self.level]["density"]:
+            n = 2 if random.random() < 0.15 + 0.1 * self.level else 1
+            for lane in lanes[:n]:
+                self.obstacles.append({
+                    "lane": lane, "y": -100.0, "passed": False,
+                    "kind": "box" if random.random() < 0.25 else "dancer",
+                    "phase": random.random() * 6.28,
+                    "col": random.choice(DANCER_COLORS),
+                })
+            lanes = lanes[n:]
+        # power-up raro, sempre numa faixa que ficou livre
+        if lanes and random.random() < 0.10:
             self.obstacles.append({
-                "lane": lane, "y": -100.0, "passed": False,
-                "kind": "box" if random.random() < 0.25 else "dancer",
-                "phase": random.random() * 6.28,
-                "col": random.choice(DANCER_COLORS),
+                "lane": lanes[0], "y": -100.0, "passed": False,
+                "kind": "power", "power": random.choice(("shield", "x2")),
             })
+
+    def collect(self, power):
+        if power == "shield":
+            self.shield = True
+            self.popup("ESCUDO!", self.px, PLAYER_Y - 90)
+        else:
+            self.x2_t = 8.0
+            self.popup("PONTOS x2!", self.px, PLAYER_Y - 90)
 
     def popup(self, text, x, y):
         self.popups.append([text, x, y, 0.8])
@@ -218,8 +235,10 @@ class Game:
             self.play_music()
 
         spd = self.speed()
+        mult = 2 if self.x2_t > 0 else 1
+        self.x2_t = max(0.0, self.x2_t - dt)
         self.scroll += spd * dt
-        self.score += spd * dt / 20
+        self.score += spd * dt / 20 * mult
 
         # deslize com inércia (mola amortecida): o patinador derrapa um pouco
         acc = (LANES[self.lane] - self.px) * 60 - self.pv * 9
@@ -244,21 +263,33 @@ class Game:
         for o in self.obstacles:
             o["y"] += spd * dt
             ox = LANES[o["lane"]]
-            w, h = (54, 80) if o["kind"] == "dancer" else (64, 36)
+            w, h = {"dancer": (54, 80), "box": (64, 36), "power": (44, 44)}[o["kind"]]
             r = pygame.Rect(0, 0, w, h)
             r.center = (ox, o["y"])
-            if r.colliderect(pr) and not (o["kind"] == "box" and airborne):
+            hit = r.colliderect(pr)
+            if o["kind"] == "power":
+                if hit:
+                    self.collect(o["power"])
+                    o["dead"] = True
+                continue
+            if hit and not (o["kind"] == "box" and airborne):
+                if self.shield:  # o escudo absorve a batida e some
+                    self.shield = False
+                    o["dead"] = True
+                    self.popup("ESCUDO QUEBROU!", self.px, PLAYER_Y - 90)
+                    continue
                 self.game_over()
                 return
             if not o["passed"] and o["y"] > PLAYER_Y + 60:
                 o["passed"] = True
                 if o["kind"] == "dancer" and abs(ox - self.px) < 90:
-                    self.score += 5
-                    self.popup("ESTILO! +5", self.px, PLAYER_Y - 70)
+                    self.score += 5 * mult
+                    self.popup(f"ESTILO! +{5 * mult}", self.px, PLAYER_Y - 70)
                 elif o["kind"] == "box" and airborne:
-                    self.score += 5
-                    self.popup("PULO! +5", self.px, PLAYER_Y - 70)
-        self.obstacles = [o for o in self.obstacles if o["y"] < H + 100]
+                    self.score += 5 * mult
+                    self.popup(f"PULO! +{5 * mult}", self.px, PLAYER_Y - 70)
+        self.obstacles = [o for o in self.obstacles
+                          if o["y"] < H + 100 and not o.get("dead")]
         for p in self.popups:
             p[2] -= 40 * dt
             p[3] -= dt
@@ -308,6 +339,14 @@ class Game:
         pygame.draw.circle(s, (90, 90, 100), (int(x), int(y)), 12, 3)
         pygame.draw.circle(s, (90, 90, 100), (int(x), int(y)), 4)
 
+    def draw_power(self, s, x, y, kind):
+        pulse = 3 * math.sin(self.t * 8)
+        color = (90, 220, 255) if kind == "shield" else (255, 215, 0)
+        pygame.draw.circle(s, (255, 255, 255), (int(x), int(y)), int(25 + pulse), 2)
+        pygame.draw.circle(s, color, (int(x), int(y)), 18)
+        img = self.font.render("S" if kind == "shield" else "x2", True, (20, 20, 40))
+        s.blit(img, img.get_rect(center=(x, y)))
+
     def draw_player(self, s):
         h = 0.0
         if self.jump_t >= 0:
@@ -327,6 +366,8 @@ class Game:
         pygame.draw.circle(s, (80, 40, 20), (hx, int(y - 34)), 14)
         pygame.draw.circle(s, (230, 185, 145), (hx, int(y - 30)), 11)
         pygame.draw.rect(s, (255, 60, 90), (hx - 12, int(y - 36), 24, 5))  # faixa na testa
+        if self.shield:
+            pygame.draw.circle(s, (90, 220, 255), (int(x), int(y)), 44, 3)
 
     def center_text(self, s, text, y, font=None, color=(255, 255, 255)):
         img = (font or self.font).render(text, True, color)
@@ -340,14 +381,20 @@ class Game:
             x = LANES[o["lane"]]
             if o["kind"] == "dancer":
                 self.draw_dancer(s, x, o["y"], o["col"], o["phase"])
-            else:
+            elif o["kind"] == "box":
                 self.draw_box(s, x, o["y"])
+            else:
+                self.draw_power(s, x, o["y"], o["power"])
         self.draw_player(s)
         for text, x, y, _ in self.popups:
             self.center_text(s, text, int(y), color=(255, 255, 120))
         s.blit(self.font.render(f"Pontos: {int(self.score)}", True, (255, 255, 255)), (12, 120))
         s.blit(self.font.render(f"Recorde: {self.best}", True, (255, 255, 255)), (12, 150))
         s.blit(self.font.render(f"Fase {self.level + 1}: {lv['name']}", True, (255, 255, 255)), (12, 180))
+        if self.shield:
+            s.blit(self.font.render("Escudo ativo", True, (90, 220, 255)), (12, 210))
+        if self.x2_t > 0:
+            s.blit(self.font.render(f"Pontos x2: {self.x2_t:.0f}s", True, (255, 215, 0)), (12, 240))
         if self.state == "play" and self.banner_t > 0:
             self.center_text(s, f"FASE {self.level + 1}", 330, self.big, (255, 240, 120))
             self.center_text(s, lv["name"], 380)
