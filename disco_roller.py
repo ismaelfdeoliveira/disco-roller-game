@@ -25,7 +25,7 @@ SR = 22050
 LANES = [W * 0.2, W * 0.5, W * 0.8]
 PLAYER_Y = 590
 LEVEL_TIME = 30.0  # segundos por fase
-SWERVE_CHANCE = (0.10, 0.25, 0.40)  # chance de um dançarino trocar de faixa, por fase
+SWERVE_CHANCE = (0.10, 0.25, 0.40, 0.50, 0.30, 0.45, 0.55)  # chance de um dançarino trocar de faixa, por fase
 SWERVE_Y = 0  # altura da tela em que o dançarino de branco começa a avisar
 SWERVE_WARN = 0.35  # segundos de aviso piscando antes de se mexer
 SWERVE_SPEED = 420  # velocidade lateral (pixels por segundo)
@@ -40,7 +40,29 @@ LEVELS = [
     {"name": "Bola de Espelhos", "bpm": 130, "root": 65.41, "prog": [0, 5, 7, 5],
      "bg": (40, 10, 6), "tiles": ((230, 160, 30), (170, 60, 20)),
      "lights": ((255, 240, 150), (255, 70, 70)), "density": 0.85},
+    {"name": "Space Disco", "bpm": 140, "root": 73.42, "prog": [0, 7, 5, 3],
+     "bg": (6, 4, 24), "tiles": ((70, 30, 160), (22, 10, 72)),
+     "lights": ((120, 255, 255), (255, 120, 255)), "density": 0.95,
+     "stars": True, "sparkle": True},
+    {"name": "Calçadão ao Pôr do Sol", "bpm": 115, "root": 58.27, "prog": [0, 5, 3, 7],
+     "bg": (60, 20, 50), "tiles": ((255, 150, 90), (214, 84, 112)),
+     "lights": ((255, 210, 120), (255, 120, 170)), "density": 0.75, "sun": True},
+    {"name": "Boate de Gelo", "bpm": 125, "root": 69.30, "prog": [0, 3, 7, 10],
+     "bg": (6, 24, 44), "tiles": ((90, 160, 210), (40, 90, 150)),
+     "lights": ((255, 255, 255), (150, 220, 255)), "density": 0.90, "snow": True},
+    {"name": "Carnaval 70", "bpm": 150, "root": 82.41, "prog": [0, 7, 0, 5],
+     "bg": (0, 40, 24), "tiles": ((0, 130, 60), (0, 70, 140)),
+     "lights": ((255, 223, 0), (255, 255, 255)), "density": 1.0,
+     "confetti": True, "perc": True},
 ]
+_rng = random.Random(7)  # semente fixa: as estrelas ficam sempre nos mesmos lugares
+STARS = [(_rng.uniform(0, W), _rng.uniform(0, H), i * 0.7) for i in range(45)]
+_rng2 = random.Random(11)
+SNOW = [(_rng2.uniform(0, W), _rng2.uniform(0, H), _rng2.uniform(40, 110), 1 + i % 3, i * 0.9)
+        for i in range(60)]
+CONFETTI_COLORS = ((255, 223, 0), (255, 255, 255), (255, 90, 90), (120, 220, 255), (255, 150, 0))
+CONFETTI = [(_rng2.uniform(0, W), _rng2.uniform(0, H), _rng2.uniform(90, 200),
+             _rng2.choice(CONFETTI_COLORS), i * 0.5) for i in range(70)]
 DANCER_COLORS = [(255, 70, 120), (80, 220, 255), (255, 200, 40), (140, 255, 120), (200, 120, 255)]
 
 
@@ -93,6 +115,13 @@ def make_track(level):
                 freq = root * 4 * 2 ** ((semis + third) / 12)
                 put(_note(freq, beat * 0.4, "square", 0.07, 9),
                     (bar * 4 + beat_in_bar + 0.5) * beat)
+    if level.get("perc"):  # chocalho em todas as semicolcheias (batida de samba)
+        for step in range(64):
+            put(hat * 0.7, step * beat / 4)
+    if level.get("sparkle"):  # notas agudas em semicolcheias (escala pentatônica)
+        for step in range(64):
+            freq = root * 8 * 2 ** ((0, 3, 5, 7, 10)[step % 5] / 12)
+            put(_note(freq, beat / 4, "square", 0.05, 14), step * beat / 4)
     buf = buf / max(1e-9, np.max(np.abs(buf))) * 0.85
     pcm = (buf * 32767).astype(np.int16)
     stereo = np.ascontiguousarray(np.column_stack((pcm, pcm)))
@@ -183,6 +212,7 @@ class Game:
         self.banner_t = 3.0
         self.shield = False  # escudo: absorve uma batida
         self.x2_t = 0.0  # segundos restantes de pontos em dobro
+        self.safe = 1  # faixa que sempre fica livre (garante que existe caminho)
 
     def start(self):
         self.reset()
@@ -276,7 +306,16 @@ class Game:
     def spawn(self):
         lanes = random.sample(range(3), 3)  # faixas em ordem aleatória
         if random.random() <= LEVELS[self.level]["density"]:
-            n = 2 if random.random() < 0.15 + 0.1 * self.level else 1
+            n = 2 if random.random() < min(0.15 + 0.1 * self.level, 0.45) else 1
+            # sempre sobra um caminho: a faixa segura muda no máximo uma faixa por linha
+            if n == 2:
+                safe = random.choice([f for f in range(3) if abs(f - self.safe) <= 1])
+                lanes = [f for f in range(3) if f != safe] + [safe]
+            elif lanes[0] == self.safe:  # bloqueou a faixa segura: passa para a vizinha livre
+                safe = min(lanes[1:], key=lambda f: abs(f - self.safe) + random.random() * 0.1)
+            else:
+                safe = self.safe
+            self.safe = safe
             free = lanes[n:]  # faixas que ficaram livres nesta batida
             for lane in lanes[:n]:
                 o = {
@@ -288,7 +327,7 @@ class Game:
                 }
                 # dançarino de branco: troca para uma faixa vizinha que está livre
                 if o["kind"] == "dancer" and random.random() < SWERVE_CHANCE[self.level]:
-                    near = [f for f in free if abs(f - lane) == 1]
+                    near = [f for f in free if abs(f - lane) == 1 and f != self.safe]
                     if near:
                         o["swerve_to"] = random.choice(near)
                         o["col"] = (255, 255, 255)
@@ -413,6 +452,19 @@ class Game:
             for col in range(W // 80 + 1):
                 color = lv["tiles"][(row - n + col) % 2]
                 pygame.draw.rect(s, color, (col * 80, row * 80 + off, 80, 80))
+        if lv.get("stars"):
+            for i, (x, y, ph) in enumerate(STARS):
+                sy = (y + self.scroll * 0.25) % H  # descem devagar, dando profundidade
+                b = int(140 + 115 * math.sin(self.t * 3 + ph))
+                pygame.draw.circle(s, (b, b, 255), (int(x), int(sy)), 1 + i % 2)
+        if lv.get("snow"):
+            for x, y, v, r, ph in SNOW:
+                sx = x + 14 * math.sin(self.t * 1.3 + ph)
+                pygame.draw.circle(s, (255, 255, 255), (int(sx), int((y + self.t * v) % H)), r)
+        if lv.get("confetti"):
+            for x, y, v, c, ph in CONFETTI:
+                sx = x + 20 * math.sin(self.t * 2 + ph)
+                pygame.draw.rect(s, c, (int(sx), int((y + self.t * v) % H), 5, 8))
         for x in (W * 0.35, W * 0.65):
             pygame.draw.line(s, (255, 255, 255), (x, 0), (x, H), 2)
 
@@ -424,6 +476,11 @@ class Game:
             y = 22 + 8 * math.sin(self.t * 3 + i)
             pygame.draw.circle(s, c, (int(30 + i * 70), int(y)), 9)
         cx, cy = W // 2, 70
+        if lv.get("sun"):  # sol retrô com faixas, no lugar da bola de espelhos
+            pygame.draw.circle(s, (255, 190, 90), (cx, cy), 62)
+            for k in range(5):
+                pygame.draw.rect(s, lv["tiles"][1], (cx - 62, cy + 8 + k * 11, 124, 3 + k))
+            return
         pygame.draw.circle(s, (210, 215, 230), (cx, cy), 30)
         for k in range(8):
             a = self.t * 1.5 + k * math.pi / 4
