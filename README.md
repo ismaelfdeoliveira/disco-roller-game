@@ -49,7 +49,7 @@ python disco_roller.py
 ## Sobre o projeto
 
 A ideia do jogo (roller disco, sete fases com cenários e músicas próprios) é minha.
-Usei IA generativa como ferramenta de desenvolvimento e depois estudei e ajustei o código.
+Usei IA generativa como ferramenta de desenvolvimento e fui aplicando e testando cada melhoria.
 
 **O que eu mudei e aprendi:**
 - Defini o conceito (roller disco anos 70), as sete fases com cenários e músicas próprios e a ordem de prioridade das melhorias, e testei cada etapa jogando.
