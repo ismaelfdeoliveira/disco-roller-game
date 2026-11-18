@@ -44,7 +44,7 @@ python disco_roller.py
 - **Obstáculos no ritmo:** dançarinos e caixas de som aparecem a cada batida da música
 - **Música sintetizada por código:** bumbo, chimbal, baixo e acordes gerados com NumPy, sem arquivos de áudio nem problemas de licença
 - **Recorde salvo** em arquivo local
-- Pronto para rodar no navegador com Pygbag (`asyncio`)
+- Estrutura compatível com Pygbag (`asyncio`), para publicar no navegador no futuro
 
 ## Sobre o projeto
 
