@@ -4,7 +4,7 @@ Jogo *endless runner* ambientado numa pista de **roller disco dos anos 70**.
 Você controla um patinador que desvia dos dançarinos ao som de música de discoteca.
 Feito em **Python + Pygame**.
 
-<!-- Coloque aqui um GIF ou captura de tela do jogo: ![Disco Roller](gameplay.gif) -->
+![Disco Roller](gameplay.png)
 
 ## Como jogar
 
