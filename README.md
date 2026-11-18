@@ -52,8 +52,8 @@ A ideia do jogo (roller disco, sete fases com cenários e músicas próprios) é
 Usei IA generativa como ferramenta de desenvolvimento e depois estudei e ajustei o código.
 
 **O que eu mudei e aprendi:**
-- [escreva aqui o que você alterou no jogo]
-- [escreva aqui o que aprendeu sobre o código]
+- Defini o conceito (roller disco anos 70), as sete fases com cenários e músicas próprios e a ordem de prioridade das melhorias, e testei cada etapa jogando.
+- Montei o ambiente no Debian (ambiente virtual e pygame-ce), aprendi a aplicar patches, a usar o Git com token de acesso e a resolver erros de áudio e de autenticação.
 
 ## Autor
 
